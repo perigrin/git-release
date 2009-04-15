@@ -1,0 +1,5 @@
+#!/usr/bin/env perl
+use strict;
+use App::GitRelease;
+
+App::GitRelease->new_with_options()->run;
