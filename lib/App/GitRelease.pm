@@ -7,23 +7,15 @@ use URI;
 
 with qw(MooseX::Getopt);
 
-has [qw(update_repo enable_tests)] => (
+has [qw(disable_update disable_tests disable_push)] => (
     isa        => 'Bool',
     is         => 'ro',
     lazy_build => 1,
 );
 
-sub _build_update_repo {
-    my $val = `git config release.update_repo`;
-    return $val if defined $val;
-    return 1;
-}
-
-sub _build_enable_tests {
-    my $val = `git config release.enable_tests`;
-    return $val if defined $val;
-    return 1;
-}
+sub _build_disable_update { `git config release.disable_update` || 0 }
+sub _build_disable_tests  { `git config release.disable_tests`  || 0 }
+sub _build_disable_push   { `git config release.disable_push`   || 0 }
 
 has release_list => (
     isa        => 'ArrayRef',
@@ -42,10 +34,13 @@ has prove => (
     }
 );
 
+before 'run_tests' => sub { print STDERR "Running tests\n\n" };
+
 sub _build_prove {
     my $self = shift;
-    my $p = App::Prove->new();
+    my $p    = App::Prove->new();
     $p->process_args( @{ $self->extra_argv } );
+    return $p;
 }
 
 sub _get_ssh {
@@ -72,6 +67,7 @@ sub _push_to_ssh_target {
 sub push_to_target {
     my ( $self, $target ) = @_;
     if ( $target =~ m|^ssh://| ) {    # we're dealing with local filesystem
+        print STDERR "Attempting push to $target\n";
         $self->_push_to_ssh_target( URI->new($target) );
     }
     else { cluck "Invalid distribution target $target"; }
@@ -81,11 +77,16 @@ sub push_to_production {
     $_[0]->push_to_target($_) for ( @{ $_[0]->release_list } );
 }
 
+sub run_update {
+    warn 'updating local repo';
+    system( 'git', 'pull' );
+}
+
 sub run {
     my ($self) = @_;
-    $self->update    if $self->update_repo;
-    $self->run_tests if $self->enable_tests;
-    $self->push_to_production;
+    $self->run_update         unless $self->disable_update;
+    $self->run_tests          unless $self->disable_tests;
+    $self->push_to_production unless $self->disable_push;
 }
 
 no Moose;
