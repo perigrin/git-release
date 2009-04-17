@@ -8,15 +8,15 @@ use Net::SSH::Expect;
 
 with qw(MooseX::Getopt);
 
-has [qw(disable_update disable_tests disable_push)] => (
+has [qw(bootstrap disable_update disable_tests disable_push)] => (
     isa        => 'Bool',
     is         => 'ro',
     lazy_build => 1,
 );
-
+sub _build_bootstrap      {0}
 sub _build_disable_update { `git config release.disable_update` || 0 }
-sub _build_disable_tests  { `git config release.disable_tests`  || 0 }
-sub _build_disable_push   { `git config release.disable_push`   || 0 }
+sub _build_disable_tests  { `git config release.disable_tests` || 0 }
+sub _build_disable_push   { `git config release.disable_push` || 0 }
 
 has release_list => (
     isa        => 'ArrayRef',
@@ -24,11 +24,7 @@ has release_list => (
     lazy_build => 1,
 );
 
-sub _build_release_list {
-    my @urls = split /\n/, `git config --get-all release.url`;
-    warn @urls;
-    return \@urls;
-}
+sub _build_release_list { [ split /\n/, `git config --get-all release.url` ] }
 
 has prove => (
     isa        => 'App::Prove',
@@ -90,6 +86,46 @@ sub push_to_production {
     print STDERR "Production updated\n";
 }
 
+has remote_origin_url => (
+    isa        => 'Str',
+    is         => 'ro',
+    lazy_build => 1,
+);
+
+sub _build_remote_origin_url {
+    chomp( my $url = `git config remote.origin.url` );
+    confess 'No remote.origin.url you will need to supply one' unless $url;
+    return $url;
+}
+
+sub _bootstrap_ssh_target {
+    my ( $self, $uri ) = @_;
+    my $ssh = $self->_get_ssh($uri);
+    $ssh->send("git clone ${\$self->remote_origin_url} $uri->{path}");
+    while ( my $chunk = $ssh->peek(2) )
+    {    # grabs chunks of output each 1 second
+        print $ssh->eat($chunk);
+    }
+
+    $ssh->close();
+}
+
+sub boostrap_target {
+    my ( $self, $target ) = @_;
+    if ( $target =~ m|^ssh://([^@]+)@([^/]+)/(.*)$| ) {
+        my $uri = { user => $1, host => $2, path => $3, };
+        print STDERR "Attempting push to $target\n";
+        $self->_bootstrap_ssh_target($uri);
+    }
+    else { cluck "Invalid target: $target"; }
+
+}
+
+sub bootstrap_production {
+    $_[0]->boostrap_target($_) for @{ $_[0]->release_list };
+    print STDERR "Production ready\n";
+}
+
 sub run_update {
     warn 'updating local repo';
     system( 'git', 'pull' );
@@ -97,9 +133,14 @@ sub run_update {
 
 sub run {
     my ($self) = @_;
-    $self->run_update         unless $self->disable_update;
-    $self->run_tests          unless $self->disable_tests;
-    $self->push_to_production unless $self->disable_push;
+    $self->run_update unless $self->disable_update;
+    $self->run_tests  unless $self->disable_tests;
+    if ( $self->bootstrap ) {
+        $self->bootstrap_production;
+    }
+    else {
+        $self->push_to_production unless $self->disable_push;
+    }
 }
 
 no Moose;
