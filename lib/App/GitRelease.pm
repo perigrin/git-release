@@ -1,5 +1,6 @@
 package App::GitRelease;
 use Moose;
+our $VERSION = '0.01';
 
 use Carp qw(cluck);
 use App::Prove;
@@ -57,6 +58,7 @@ sub _get_ssh {
     );
 
     $ssh->run_ssh();
+    print $ssh->read_all(2);
     $ssh->exec("stty raw -echo");
     return $ssh;
 }
@@ -65,7 +67,11 @@ sub _push_to_ssh_target {
     my ( $self, $uri ) = @_;
     my $ssh = $self->_get_ssh($uri);
     print STDERR $ssh->exec("cd $uri->{path}");
-    print STDERR $ssh->exec('git pull');
+    $ssh->send('git pull');
+    while ( defined( my $line = $ssh->read_line() ) ) {
+        print $line . "\n";
+    }
+
     $ssh->close();
 }
 
@@ -81,6 +87,7 @@ sub push_to_target {
 
 sub push_to_production {
     $_[0]->push_to_target($_) for @{ $_[0]->release_list };
+    print STDERR "Production updated\n";
 }
 
 sub run_update {
@@ -97,3 +104,78 @@ sub run {
 
 no Moose;
 1;
+__END__
+
+=head1 NAME
+
+App::GitRelease - manage releasing a git repository to a cluster servers
+
+=head1 VERSION
+
+This documentation refers to version 0.01.
+
+=head1 SYNOPSIS
+
+    #!/usr/bin/env perl
+    use strict;
+    use lib qw(lib);
+    use App::GitRelease;
+
+    App::GitRelease->new_with_options()->run;
+
+=head1 DESCRIPTION
+
+The App::GitRelease class implements ...
+
+=head1 SUBROUTINES / METHODS
+
+=head2 push_to_target (method)
+
+Parameters:
+    target
+
+Insert description of method here...
+
+=head2 push_to_production (method)
+
+Parameters:
+    none
+
+Arguments:
+    none
+
+Insert description of method here...
+
+=head2 run_update
+
+Parameters:
+    none
+
+Insert description of subroutine here...
+
+=head2 run (method)
+
+Parameters:
+    none
+
+Main method, run this to run the main application.
+
+=head1 DEPENDENCIES
+
+Moose
+
+App::Prove
+
+Net::SSH::Expect
+
+=head1 AUTHOR
+
+Chris Prather (chris@prather.org)
+
+=head1 LICENCE
+
+Copyright 2009 by Chris Prather.
+
+This software is free.  It is licensed under the same terms as Perl itself.
+
+=cut
