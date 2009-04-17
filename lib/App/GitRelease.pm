@@ -3,7 +3,7 @@ use Moose;
 
 use Carp qw(cluck);
 use App::Prove;
-use URI;
+use Net::SSH::Expect;
 
 with qw(MooseX::Getopt);
 
@@ -23,7 +23,11 @@ has release_list => (
     lazy_build => 1,
 );
 
-sub _build_release_list { [ split /\n/, `git config --get-all release.url` ] }
+sub _build_release_list {
+    my @urls = split /\n/, `git config --get-all release.url`;
+    warn @urls;
+    return \@urls;
+}
 
 has prove => (
     isa        => 'App::Prove',
@@ -45,36 +49,38 @@ sub _build_prove {
 
 sub _get_ssh {
     my ( $self, $uri ) = @_;
+
     my $ssh = Net::SSH::Expect->new(
-        host    => $uri->host,
-        user    => $uri->user,
+        host    => $uri->{host},
+        user    => $uri->{user},
         raw_pty => 1
     );
 
-    $ssh->run_ssh() or confess "SSH process couldn't start: $!";
-    ( $ssh->read_all(2) =~ />\s*\z/ ) or confess "no remote prompt";
+    $ssh->run_ssh();
+    $ssh->exec("stty raw -echo");
     return $ssh;
 }
 
 sub _push_to_ssh_target {
     my ( $self, $uri ) = @_;
     my $ssh = $self->_get_ssh($uri);
-    $ssh->exec("cd ${\$uri->path}");
-    $ssh->exec('git pull');
+    print STDERR $ssh->exec("cd $uri->{path}");
+    print STDERR $ssh->exec('git pull');
     $ssh->close();
 }
 
 sub push_to_target {
     my ( $self, $target ) = @_;
-    if ( $target =~ m|^ssh://| ) {    # we're dealing with local filesystem
+    if ( $target =~ m|^ssh://([^@]+)@([^/]+)/(.*)$| ) {
+        my $uri = { user => $1, host => $2, path => $3, };
         print STDERR "Attempting push to $target\n";
-        $self->_push_to_ssh_target( URI->new($target) );
+        $self->_push_to_ssh_target($uri);
     }
-    else { cluck "Invalid distribution target $target"; }
+    else { cluck "Invalid target: $target"; }
 }
 
 sub push_to_production {
-    $_[0]->push_to_target($_) for ( @{ $_[0]->release_list } );
+    $_[0]->push_to_target($_) for @{ $_[0]->release_list };
 }
 
 sub run_update {
