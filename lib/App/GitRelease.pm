@@ -2,21 +2,13 @@ package App::GitRelease;
 use Moose;
 our $VERSION = '0.01';
 
-use Carp qw(cluck);
-use App::Prove;
-use Net::SSH::Expect;
-
-with qw(MooseX::Getopt);
-
-has [qw(bootstrap disable_update disable_tests disable_push)] => (
-    isa        => 'Bool',
-    is         => 'ro',
-    lazy_build => 1,
+with qw(
+    MooseX::Getopt
+    App::GitRelease::DoesTesting
+    App::GitRelease::DoesLocalUpdate
+    App::GitRelease::DoesBootstrap
+    App::GitRelease::DoesProductionUpdate
 );
-sub _build_bootstrap      {0}
-sub _build_disable_update { `git config release.disable_update` || 0 }
-sub _build_disable_tests  { `git config release.disable_tests` || 0 }
-sub _build_disable_push   { `git config release.disable_push` || 0 }
 
 has release_list => (
     isa        => 'ArrayRef',
@@ -25,111 +17,6 @@ has release_list => (
 );
 
 sub _build_release_list { [ split /\n/, `git config --get-all release.url` ] }
-
-has prove => (
-    isa        => 'App::Prove',
-    is         => 'ro',
-    lazy_build => 1,
-    handles    => {
-        run_tests => 'run',
-    }
-);
-
-before 'run_tests' => sub { print STDERR "Running tests\n\n" };
-
-sub _build_prove {
-    my $self = shift;
-    my $p    = App::Prove->new();
-    $p->process_args( @{ $self->extra_argv } );
-    return $p;
-}
-
-sub _get_ssh {
-    my ( $self, $uri ) = @_;
-
-    my $ssh = Net::SSH::Expect->new(
-        host    => $uri->{host},
-        user    => $uri->{user},
-        raw_pty => 1
-    );
-
-    $ssh->run_ssh();
-    print $ssh->read_all(2);
-    $ssh->exec("stty raw -echo");
-    return $ssh;
-}
-
-sub _push_to_ssh_target {
-    my ( $self, $uri ) = @_;
-    my $ssh = $self->_get_ssh($uri);
-    print STDERR $ssh->exec("cd $uri->{path}");
-    $ssh->send('git pull');
-    while ( defined( my $line = $ssh->read_line() ) ) {
-        print $line . "\n";
-    }
-
-    $ssh->close();
-}
-
-sub push_to_target {
-    my ( $self, $target ) = @_;
-    if ( $target =~ m|^ssh://([^@]+)@([^/]+)/(.*)$| ) {
-        my $uri = { user => $1, host => $2, path => $3, };
-        print STDERR "Attempting push to $target\n";
-        $self->_push_to_ssh_target($uri);
-    }
-    else { cluck "Invalid target: $target"; }
-}
-
-sub push_to_production {
-    $_[0]->push_to_target($_) for @{ $_[0]->release_list };
-    print STDERR "Production updated\n";
-}
-
-has remote_origin_url => (
-    isa        => 'Str',
-    is         => 'ro',
-    lazy_build => 1,
-);
-
-sub _build_remote_origin_url {
-    chomp( my $url = `git config remote.origin.url` );
-    confess 'No remote.origin.url you will need to supply one' unless $url;
-    return $url;
-}
-
-sub _bootstrap_ssh_target {
-    my ( $self, $uri ) = @_;
-    my $ssh = $self->_get_ssh($uri);
-    $ssh->send("git clone ${\$self->remote_origin_url} $uri->{path}");
-    while ( my $chunk = $ssh->peek(2) )
-    {    # grabs chunks of output each 1 second
-        print $ssh->eat($chunk);
-    }
-
-    $ssh->close();
-}
-
-sub boostrap_target {
-    my ( $self, $target ) = @_;
-    if ( $target =~ m|^ssh://([^@]+)@([^/]+)/(.*)$| ) {
-        my $uri = { user => $1, host => $2, path => $3, };
-        print STDERR "Attempting push to $target\n";
-        $self->_bootstrap_ssh_target($uri);
-    }
-    else { cluck "Invalid target: $target"; }
-
-}
-
-sub bootstrap_production {
-    $_[0]->boostrap_target($_) for @{ $_[0]->release_list };
-    print STDERR "Production ready\n";
-}
-
-sub run_update {
-    warn 'updating local repo';
-    system( 'git', 'pull' );
-}
 
 sub run {
     my ($self) = @_;
